@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npx create-vite@latest . --template react)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(timeout 15 npm run build:*)",
+      "Bash(npm run build:*)",
+      "Bash(open:*)"
+    ]
+  }
+}
