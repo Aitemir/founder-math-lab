@@ -43,6 +43,36 @@ const fmt = {
   num: (n) => Number(n).toLocaleString(),
 };
 
+// ── LocalStorage persistence helpers ─────────────────────────
+// Reads a stored JSON value and merges it with defaults so that any
+// new fields added in future updates still get their default values.
+// Wrapped in try/catch to handle private-browsing storage restrictions.
+const LS_KEYS = {
+  market: 'fml_market_v1',
+  unit: 'fml_unit_v1',
+  runway: 'fml_runway_v1',
+  module: 'fml_module_v1',
+  screen: 'fml_screen_v1',
+  seenDecks: 'fml_seen_decks_v1',
+};
+
+function loadState(key, defaults) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return defaults;
+    // Spread defaults first so any newly-added fields still get values
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveState(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* storage full or blocked — fail silently */ }
+}
+
 // ── Default State (mediocre ~42 score to start) ───────────────
 const DEFAULTS = {
   market: {
@@ -72,6 +102,46 @@ const DEFAULTS = {
     safeCapPercent: 20,        // 20% SAFE dilution
     optionPool: 15,            // 15% option pool
   },
+};
+
+// ── Flashcard Decks ───────────────────────────────────────────
+const FLASHCARD_DECKS = {
+  1: [
+    { term: 'TAM', acronym: 'Total Addressable Market',
+      definition: 'The entire global demand for a product. If every possible buyer paid your price, TAM is the revenue ceiling. Investors use it to size the opportunity — too small and the business can\'t be venture-scale.' },
+    { term: 'SAM', acronym: 'Serviceable Addressable Market',
+      definition: 'The fraction of TAM you can realistically reach given your distribution model, geography, and pricing. SAM grounds TAM in reality.' },
+    { term: 'SOM', acronym: 'Serviceable Obtainable Market',
+      definition: 'What you can actually win near-term — your SAM minus competition and go-to-market constraints. SOM drives your first 12–18-month revenue plan.' },
+    { term: 'Market Penetration',
+      definition: 'The % of SAM you\'ve captured. Early-stage startups target 1–5% of SAM as a credible SOM. Claiming 10%+ in year 1 raises red flags with investors.' },
+    { term: 'Revenue Potential',
+      definition: 'SOM × your price. The number investors use to stress-test whether your market is big enough for a venture-scale business (typically requires a $1B+ TAM).' },
+  ],
+  2: [
+    { term: 'LTV', acronym: 'Lifetime Value',
+      definition: 'Total gross profit from one customer before they churn. LTV = (Monthly Price × Gross Margin%) ÷ Monthly Churn Rate. It\'s the ceiling on how much you can profitably spend to acquire a customer.' },
+    { term: 'CAC', acronym: 'Customer Acquisition Cost',
+      definition: 'All-in cost to land one customer — ad spend, sales salaries, events, tools — divided by new customers added. VCs want to see LTV ≥ 3× CAC.' },
+    { term: 'Gross Margin',
+      definition: 'Revenue minus direct delivery costs (hosting, support, APIs), divided by revenue. SaaS targets 70–85%. It\'s the efficiency multiplier behind every unit economics calculation.' },
+    { term: 'Monthly Churn',
+      definition: '% of customers who cancel each month. 5% monthly churn = ~46% annual — nearly half your base gone per year. Even 1% improvement in churn can double LTV.' },
+    { term: 'CAC Payback Period',
+      definition: 'Months to recover your CAC from gross profit. Under 12 months is acceptable; under 6 is excellent. Long payback = capital-intensive growth that\'s hard to fund.' },
+  ],
+  3: [
+    { term: 'Burn Rate',
+      definition: 'Cash spent per month. Net burn = operating expenses minus revenue. It determines survival — a company dies when cash hits zero.' },
+    { term: 'Runway',
+      definition: 'Months of cash remaining = Cash ÷ Monthly Net Burn. Raise your next round when you have 6–9 months left — earlier gives you negotiating leverage.' },
+    { term: 'MRR', acronym: 'Monthly Recurring Revenue',
+      definition: 'Predictable subscription revenue in one month. MRR is the core SaaS health metric — it shows the recurring, contractual revenue baseline.' },
+    { term: 'ARR', acronym: 'Annual Recurring Revenue',
+      definition: 'MRR × 12. Used for SaaS valuations, growth-rate comparisons, and investor benchmarks. Most Series A targets start at $1–2M ARR.' },
+    { term: 'Dilution',
+      definition: 'The % of equity surrendered in a funding round. Typical early-stage dilution is 15–25% per round. High dilution early compounds — each subsequent round dilutes what remains.' },
+  ],
 };
 
 // ── Scoring Engine ────────────────────────────────────────────
@@ -122,7 +192,9 @@ function computeScore(market, unit, runway) {
   }
 
   // ── MODULE 2: Unit Economics ──────────────────────────────
-  const monthlyPrice = unit.billing === 'monthly' ? unit.price : unit.price / 12;
+  const monthlyPrice = unit.billing === 'monthly' ? unit.price
+    : unit.billing === 'quarterly' ? unit.price / 3
+    : unit.price / 12;
   const grossRevPerMonth = monthlyPrice * (unit.grossMargin / 100);
   const churnRate = unit.churnMonthly / 100;
   const ltv = churnRate > 0 ? grossRevPerMonth / churnRate : 999_999;
@@ -1581,7 +1653,51 @@ const MarketModule = ({ state, dispatch, flags, derived }) => {
     >
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
 
-        {/* LEFT: Params + Concepts */}
+        {/* LEFT: Concepts + Visuals */}
+        <div>
+          <SectionLabel>Key Concepts</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+            <ConceptCard
+              term="TAM / SAM / SOM"
+              definition="TAM is everyone who could theoretically buy. SAM is who you can actually reach with your model. SOM is what you can realistically capture in your horizon."
+              why="VCs use this to sanity-check whether a $1B outcome is geometrically possible."
+              accent="#6366f1"
+            />
+            <ConceptCard
+              term="SOM Realism"
+              definition="Most B2B SaaS companies capture 3–8% of SAM in 5 years. Claiming 20% without a clear channel strategy raises red flags."
+              why="Investors compare your SOM% to category benchmarks and comparable companies."
+              accent="#f59e0b"
+            />
+            <ConceptCard
+              term="Venture Scale"
+              definition="For a VC to make returns, you need a plausible path to $100M+ ARR. That means SOM ≥ $100M and a market that compounds."
+              why="A fund returning 3× needs its winners to be 10–30× investments."
+              accent="#22c55e"
+            />
+          </div>
+
+          <div style={{
+            background: '#0b0b0f',
+            border: '1px solid #1a1a25',
+            borderRadius: '12px',
+            padding: '18px',
+            marginBottom: '16px',
+          }}>
+            <FunnelChart tam={tam} sam={sam} som={som} />
+          </div>
+
+          <div style={{
+            background: '#0b0b0f',
+            border: '1px solid #1a1a25',
+            borderRadius: '12px',
+            padding: '18px',
+          }}>
+            <ARRTimeline som={som} horizon={horizon} targetARR={targetARR} />
+          </div>
+        </div>
+
+        {/* RIGHT: Parameters + Outputs + Flags */}
         <div>
           <SectionLabel>Parameters — drag to adjust</SectionLabel>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '20px' }}>
@@ -1666,51 +1782,6 @@ const MarketModule = ({ state, dispatch, flags, derived }) => {
           <SectionLabel>Flags</SectionLabel>
           <FlagsPanel flags={flags} moduleId={1} />
         </div>
-
-        {/* RIGHT: Visuals + Concepts */}
-        <div>
-          <div style={{
-            background: '#0b0b0f',
-            border: '1px solid #1a1a25',
-            borderRadius: '12px',
-            padding: '18px',
-            marginBottom: '16px',
-          }}>
-            <FunnelChart tam={tam} sam={sam} som={som} />
-          </div>
-
-          <div style={{
-            background: '#0b0b0f',
-            border: '1px solid #1a1a25',
-            borderRadius: '12px',
-            padding: '18px',
-            marginBottom: '20px',
-          }}>
-            <ARRTimeline som={som} horizon={horizon} targetARR={targetARR} />
-          </div>
-
-          <SectionLabel>Key Concepts</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <ConceptCard
-              term="TAM / SAM / SOM"
-              definition="TAM is everyone who could theoretically buy. SAM is who you can actually reach with your model. SOM is what you can realistically capture in your horizon."
-              why="VCs use this to sanity-check whether a $1B outcome is geometrically possible."
-              accent="#6366f1"
-            />
-            <ConceptCard
-              term="SOM Realism"
-              definition="Most B2B SaaS companies capture 3–8% of SAM in 5 years. Claiming 20% without a clear channel strategy raises red flags."
-              why="Investors compare your SOM% to category benchmarks and comparable companies."
-              accent="#f59e0b"
-            />
-            <ConceptCard
-              term="Venture Scale"
-              definition="For a VC to make returns, you need a plausible path to $100M+ ARR. That means SOM ≥ $100M and a market that compounds."
-              why="A fund returning 3× needs its winners to be 10–30× investments."
-              accent="#22c55e"
-            />
-          </div>
-        </div>
       </div>
     </ModuleShell>
   );
@@ -1723,7 +1794,11 @@ const UnitEconomicsModule = ({ state, dispatch, flags, derived }) => {
   const { price, billing, grossMargin, cac, churnMonthly } = state;
   const { ltv, payback, ltvCac, avgLifespanMonths } = derived;
 
-  const monthlyPrice = billing === 'monthly' ? price : price / 12;
+  const monthlyPrice = billing === 'monthly' ? price
+    : billing === 'quarterly' ? price / 3
+    : price / 12;
+  const quarterlyPrice = monthlyPrice * 3;
+  const annualPrice    = monthlyPrice * 12;
   const annualChurn = (1 - Math.pow(1 - churnMonthly / 100, 12)) * 100;
   const retention = 100 - churnMonthly;
   const contribMarginPerCustomer = monthlyPrice * (grossMargin / 100);
@@ -1735,34 +1810,117 @@ const UnitEconomicsModule = ({ state, dispatch, flags, derived }) => {
     >
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
 
-        {/* LEFT */}
+        {/* LEFT: Concepts + Visuals */}
+        <div>
+          <SectionLabel>Key Concepts</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+            <ConceptCard
+              term="LTV — Lifetime Value"
+              definition="How much gross profit one customer generates over their lifetime. Gross Margin = (Revenue − COGS) ÷ Revenue × 100 — where COGS are direct delivery costs (hosting, support, APIs), not salaries or marketing. E.g. $100 price, $20 delivery cost → 80% GM. LTV = (Monthly Price × Gross Margin%) ÷ Monthly Churn Rate."
+              why="Higher LTV = more budget for acquisition. Every churn point matters exponentially."
+              accent="#22c55e"
+            />
+            <ConceptCard
+              term="CAC — Customer Acquisition Cost"
+              definition="Total sales + marketing spend divided by new customers in a period. Fully-loaded CAC includes salaries, tools, ads."
+              why="VCs benchmark CAC against LTV. Below 3× LTV/CAC signals broken economics."
+              accent="#ef4444"
+            />
+            <ConceptCard
+              term="Payback Period"
+              definition="Months to recover CAC from gross profit. Payback = CAC ÷ (Monthly Price × Gross Margin%)."
+              why="Long payback = capital-intensive growth. >18mo is a Series A risk flag."
+              accent="#f59e0b"
+            />
+            <ConceptCard
+              term="Churn vs Retention"
+              definition="5% monthly churn = 46% annual churn — half your customers gone per year. Best SaaS: <1% monthly, often with negative churn via expansion revenue."
+              why="Churn is the silent killer. 1% improvement in churn can 2× LTV."
+              accent="#818cf8"
+            />
+          </div>
+
+          <div style={{
+            background: '#0b0b0f',
+            border: '1px solid #1a1a25',
+            borderRadius: '12px',
+            padding: '18px',
+            marginBottom: '16px',
+          }}>
+            <LTVCACChart ltv={ltv} cac={cac} payback={payback} />
+          </div>
+
+          <div style={{
+            background: '#0b0b0f',
+            border: '1px solid #1a1a25',
+            borderRadius: '12px',
+            padding: '18px',
+          }}>
+            <BattleMeter ltvCac={ltvCac} payback={payback} grossMargin={grossMargin} churnMonthly={churnMonthly} />
+          </div>
+        </div>
+
+        {/* RIGHT: Parameters + Outputs + Flags */}
         <div>
           <SectionLabel>Parameters — drag to adjust</SectionLabel>
 
           {/* Billing toggle */}
-          <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '11px', color: '#4b5568' }}>Billing:</span>
             <Toggle
               value={billing}
-              options={[{ value: 'monthly', label: 'Monthly' }, { value: 'annual', label: 'Annual' }]}
+              options={[
+                { value: 'monthly', label: 'Monthly' },
+                { value: 'quarterly', label: 'Quarterly' },
+                { value: 'annual', label: 'Annual' },
+              ]}
               onChange={(v) => dispatch({ type: 'SET_UNIT', field: 'billing', value: v })}
             />
-            {billing === 'annual' && (
-              <span style={{ fontSize: '10px', color: '#4b5568' }}>
-                (÷12 = {fmt.currency(price / 12)}/mo effective)
-              </span>
-            )}
+          </div>
+
+          {/* Price equivalents bar */}
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+            {[
+              { cadence: 'monthly',   label: 'Monthly',   value: monthlyPrice },
+              { cadence: 'quarterly', label: 'Quarterly', value: quarterlyPrice },
+              { cadence: 'annual',    label: 'Annual',    value: annualPrice },
+            ].map(({ cadence, label, value }) => {
+              const active = billing === cadence;
+              return (
+                <button
+                  key={cadence}
+                  onClick={() => dispatch({ type: 'SET_UNIT', field: 'billing', value: cadence })}
+                  style={{
+                    flex: 1,
+                    padding: '7px 6px',
+                    borderRadius: '8px',
+                    border: active ? '1px solid #4b5568' : '1px solid #1a1a25',
+                    background: active ? '#1a1a2e' : '#0b0b0f',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <div style={{ fontSize: '9px', color: active ? '#9ca3af' : '#374151', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {label}
+                  </div>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: active ? '#e5e7eb' : '#4b5568', fontVariantNumeric: 'tabular-nums' }}>
+                    {fmt.currency(value)}
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '20px' }}>
             <ParameterCell
-              label={billing === 'annual' ? 'Price / year' : 'Price / month'}
+              label={billing === 'annual' ? 'Price / year' : billing === 'quarterly' ? 'Price / quarter' : 'Price / month'}
               value={price}
               onChange={(v) => dispatch({ type: 'SET_UNIT', field: 'price', value: v })}
-              min={10} max={50_000}
-              step={billing === 'annual' ? 100 : 10} dragSensitivity={25}
+              min={10} max={10_000_000}
+              step={billing === 'annual' ? 100 : billing === 'quarterly' ? 50 : 10} dragSensitivity={25}
               format={(v) => `$${v.toLocaleString()}`}
-              unit={billing === 'annual' ? '/yr' : '/mo'}
+              unit={billing === 'annual' ? '/yr' : billing === 'quarterly' ? '/qtr' : '/mo'}
               hint="What you charge per customer"
             />
             <ParameterCell
@@ -1791,7 +1949,7 @@ const UnitEconomicsModule = ({ state, dispatch, flags, derived }) => {
               step={0.5} dragSensitivity={25}
               format={(v) => fmt.pct(v)}
               unit="/mo"
-              hint="% of customers who cancel each month"
+              hint="Always measured monthly, regardless of billing cadence"
             />
           </div>
 
@@ -1834,57 +1992,6 @@ const UnitEconomicsModule = ({ state, dispatch, flags, derived }) => {
           <SectionLabel>Flags</SectionLabel>
           <FlagsPanel flags={flags} moduleId={2} />
         </div>
-
-        {/* RIGHT */}
-        <div>
-          <div style={{
-            background: '#0b0b0f',
-            border: '1px solid #1a1a25',
-            borderRadius: '12px',
-            padding: '18px',
-            marginBottom: '16px',
-          }}>
-            <LTVCACChart ltv={ltv} cac={cac} payback={payback} />
-          </div>
-
-          <div style={{
-            background: '#0b0b0f',
-            border: '1px solid #1a1a25',
-            borderRadius: '12px',
-            padding: '18px',
-            marginBottom: '20px',
-          }}>
-            <BattleMeter ltvCac={ltvCac} payback={payback} grossMargin={grossMargin} churnMonthly={churnMonthly} />
-          </div>
-
-          <SectionLabel>Key Concepts</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <ConceptCard
-              term="LTV — Lifetime Value"
-              definition="How much gross profit one customer generates before churning. LTV = (Monthly Price × Gross Margin%) ÷ Monthly Churn Rate."
-              why="Higher LTV = more budget for acquisition. Every churn point matters exponentially."
-              accent="#22c55e"
-            />
-            <ConceptCard
-              term="CAC — Customer Acquisition Cost"
-              definition="Total sales + marketing spend divided by new customers in a period. Fully-loaded CAC includes salaries, tools, ads."
-              why="VCs benchmark CAC against LTV. Below 3× LTV/CAC signals broken economics."
-              accent="#ef4444"
-            />
-            <ConceptCard
-              term="Payback Period"
-              definition="Months to recover CAC from gross profit. Payback = CAC ÷ (Monthly Price × Gross Margin%)."
-              why="Long payback = capital-intensive growth. >18mo is a Series A risk flag."
-              accent="#f59e0b"
-            />
-            <ConceptCard
-              term="Churn vs Retention"
-              definition="5% monthly churn = 46% annual churn — half your customers gone per year. Best SaaS: <1% monthly, often with negative churn via expansion revenue."
-              why="Churn is the silent killer. 1% improvement in churn can 2× LTV."
-              accent="#818cf8"
-            />
-          </div>
-        </div>
       </div>
     </ModuleShell>
   );
@@ -1915,7 +2022,64 @@ const RunwayModule = ({ state, dispatch, flags, derived }) => {
     >
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
 
-        {/* LEFT */}
+        {/* LEFT: Concepts + Visuals */}
+        <div>
+          <SectionLabel>Key Concepts</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+            <ConceptCard
+              term="Runway"
+              definition="How long until you run out of cash at the current burn rate. Runway = Cash ÷ Net Monthly Burn. Always count from today's net burn, not gross."
+              why="Fundraising takes 3–6 months. 18+ months gives you room to raise from strength, not desperation."
+              accent="#6366f1"
+            />
+            <ConceptCard
+              term="Burn Rate"
+              definition="Net burn = total expenses minus revenue. A company with $200K expenses and $80K revenue burns $120K/mo net. Track both gross and net."
+              why="Investors watch burn multiple: net burn ÷ new ARR added. <1.5× is efficient."
+              accent="#f87171"
+            />
+            <ConceptCard
+              term="Cash Trough"
+              definition="The lowest point your cash balance reaches before revenue growth outpaces burn. Common for fast-growing startups to see a J-curve."
+              why="Know your trough in advance. If it goes negative, you need a bridge or revenue acceleration."
+              accent="#fbbf24"
+            />
+            <ConceptCard
+              term="Dilution"
+              definition="Selling equity reduces your ownership percentage. SAFE notes convert at valuation caps. Option pools are typically 10–20% of fully-diluted shares."
+              why="Every round dilutes. Model downstream dilution now — a 20% seed can become 60% over 3 rounds."
+              accent="#22c55e"
+            />
+          </div>
+
+          <div style={{
+            background: '#0b0b0f',
+            border: '1px solid #1a1a25',
+            borderRadius: '12px',
+            padding: '18px',
+            marginBottom: '16px',
+          }}>
+            <CashFlowChart
+              cashData={cashData}
+              fundraiseMonth={fundraiseMonth}
+              fundraiseAmount={fundraiseAmount}
+            />
+          </div>
+
+          <div style={{
+            background: '#0b0b0f',
+            border: '1px solid #1a1a25',
+            borderRadius: '12px',
+            padding: '18px',
+          }}>
+            <div style={{ fontSize: '10px', color: '#4b5568', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '14px' }}>
+              Cap Table After Seed
+            </div>
+            <OwnershipDonut safeCapPercent={safeCapPercent} optionPool={optionPool} />
+          </div>
+        </div>
+
+        {/* RIGHT: Parameters + Outputs + Flags */}
         <div>
           <SectionLabel>Cash & Burn</SectionLabel>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
@@ -2081,66 +2245,118 @@ const RunwayModule = ({ state, dispatch, flags, derived }) => {
           <SectionLabel>Flags</SectionLabel>
           <FlagsPanel flags={flags} moduleId={3} />
         </div>
+      </div>
+    </ModuleShell>
+  );
+};
 
-        {/* RIGHT */}
-        <div>
-          <div style={{
-            background: '#0b0b0f',
-            border: '1px solid #1a1a25',
-            borderRadius: '12px',
-            padding: '18px',
-            marginBottom: '16px',
-          }}>
-            <CashFlowChart
-              cashData={cashData}
-              fundraiseMonth={fundraiseMonth}
-              fundraiseAmount={fundraiseAmount}
-            />
+// ═══════════════════════════════════════════════════════════════
+// FLASHCARD SCREEN
+// ═══════════════════════════════════════════════════════════════
+const FlashcardScreen = ({ moduleNum, cards, cardIndex, onNext, onBack, onSkipAll }) => {
+  const card = cards[cardIndex];
+  const isLast = cardIndex === cards.length - 1;
+  const isFirst = cardIndex === 0;
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(8,8,9,0.97)',
+      zIndex: 200,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}>
+      <div style={{ width: '100%', maxWidth: '520px', padding: '0 24px' }}>
+        {/* Header */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '32px',
+          fontSize: '12px',
+          color: '#4b5568',
+        }}>
+          <span>Module {moduleNum} — Key Concepts</span>
+          <span>{cardIndex + 1} / {cards.length}</span>
+        </div>
+
+        {/* Card */}
+        <div style={{
+          background: '#0b0b0f',
+          border: '1px solid #1a1a25',
+          borderRadius: '16px',
+          padding: '40px',
+        }}>
+          <div style={{ fontSize: '34px', fontWeight: 700, color: '#e5e7eb' }}>
+            {card.term}
           </div>
-
-          <div style={{
-            background: '#0b0b0f',
-            border: '1px solid #1a1a25',
-            borderRadius: '12px',
-            padding: '18px',
-            marginBottom: '20px',
-          }}>
-            <div style={{ fontSize: '10px', color: '#4b5568', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '14px' }}>
-              Cap Table After Seed
+          {card.acronym && (
+            <div style={{ fontSize: '13px', color: '#6366f1', fontStyle: 'italic', marginTop: '4px' }}>
+              {card.acronym}
             </div>
-            <OwnershipDonut safeCapPercent={safeCapPercent} optionPool={optionPool} />
+          )}
+          <div style={{ height: '1px', background: '#1a1a25', margin: '20px 0' }} />
+          <div style={{ fontSize: '15px', color: '#8a8898', lineHeight: 1.75 }}>
+            {card.definition}
           </div>
 
-          <SectionLabel>Key Concepts</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <ConceptCard
-              term="Runway"
-              definition="How long until you run out of cash at the current burn rate. Runway = Cash ÷ Net Monthly Burn. Always count from today's net burn, not gross."
-              why="Fundraising takes 3–6 months. 18+ months gives you room to raise from strength, not desperation."
-              accent="#6366f1"
-            />
-            <ConceptCard
-              term="Burn Rate"
-              definition="Net burn = total expenses minus revenue. A company with $200K expenses and $80K revenue burns $120K/mo net. Track both gross and net."
-              why="Investors watch burn multiple: net burn ÷ new ARR added. <1.5× is efficient."
-              accent="#f87171"
-            />
-            <ConceptCard
-              term="Cash Trough"
-              definition="The lowest point your cash balance reaches before revenue growth outpaces burn. Common for fast-growing startups to see a J-curve."
-              why="Know your trough in advance. If it goes negative, you need a bridge or revenue acceleration."
-              accent="#fbbf24"
-            />
-            <ConceptCard
-              term="Dilution"
-              definition="Selling equity reduces your ownership percentage. SAFE notes convert at valuation caps. Option pools are typically 10–20% of fully-diluted shares."
-              why="Every round dilutes. Model downstream dilution now — a 20% seed can become 60% over 3 rounds."
-              accent="#22c55e"
-            />
+          {/* Footer */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginTop: '32px',
+          }}>
+            <button
+              onClick={onSkipAll}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#374151',
+                fontSize: '13px',
+                cursor: 'pointer',
+                padding: '4px 0',
+              }}
+            >
+              Skip all
+            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={onBack}
+                disabled={isFirst}
+                style={{
+                  background: 'none',
+                  border: '1px solid #1a1a25',
+                  borderRadius: '8px',
+                  color: isFirst ? '#2a2a35' : '#6b7280',
+                  fontSize: '15px',
+                  padding: '10px 16px',
+                  cursor: isFirst ? 'default' : 'pointer',
+                }}
+              >
+                ←
+              </button>
+              <button
+                onClick={onNext}
+                style={{
+                  background: 'linear-gradient(135deg, #4338ca, #6366f1)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  fontSize: isLast ? '13px' : '15px',
+                  fontWeight: 700,
+                  padding: '10px 22px',
+                  cursor: 'pointer',
+                }}
+              >
+                {isLast ? 'Start Module →' : '→'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </ModuleShell>
+    </div>
   );
 };
 
@@ -2253,11 +2469,56 @@ const IntroScreen = ({ onStart }) => (
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
-  const [screen, setScreen] = useState('intro'); // 'intro' | 'modules'
-  const [currentModule, setCurrentModule] = useState(1);
-  const [market, setMarket] = useState(DEFAULTS.market);
-  const [unit, setUnit] = useState(DEFAULTS.unit);
-  const [runway, setRunway] = useState(DEFAULTS.runway);
+  // Lazy initialisers read from localStorage on first mount only.
+  // If a user has visited before their values are restored; otherwise
+  // the DEFAULTS produce the intentionally "mediocre" starting score.
+  const [screen, setScreen] = useState(() => {
+    try { return localStorage.getItem(LS_KEYS.screen) || 'intro'; } catch { return 'intro'; }
+  });
+  const [currentModule, setCurrentModule] = useState(() => {
+    try { return Number(localStorage.getItem(LS_KEYS.module)) || 1; } catch { return 1; }
+  });
+  const [market, setMarket] = useState(() => loadState(LS_KEYS.market, DEFAULTS.market));
+  const [unit, setUnit] = useState(() => loadState(LS_KEYS.unit, DEFAULTS.unit));
+  const [runway, setRunway] = useState(() => loadState(LS_KEYS.runway, DEFAULTS.runway));
+
+  const [flashcardActive, setFlashcardActive] = useState(false);
+  const [flashcardModule, setFlashcardModule] = useState(1);
+  const [flashcardIndex, setFlashcardIndex]   = useState(0);
+  const [seenDecks, setSeenDecks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_KEYS.seenDecks) || '[]'); }
+    catch { return []; }
+  });
+
+  // Persist every state slice to localStorage whenever it changes.
+  // Using separate effects keeps each save minimal and independent.
+  useEffect(() => { saveState(LS_KEYS.market, market); }, [market]);
+  useEffect(() => { saveState(LS_KEYS.unit, unit); }, [unit]);
+  useEffect(() => { saveState(LS_KEYS.runway, runway); }, [runway]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEYS.module, String(currentModule)); } catch {}
+  }, [currentModule]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEYS.screen, screen); } catch {}
+  }, [screen]);
+
+  // Auto-show flashcards on first visit to each module.
+  // Read seenDecks from localStorage (not React state) so the check is always
+  // fresh — avoids stale-closure issues when currentModule changes rapidly.
+  useEffect(() => {
+    if (screen !== 'modules') return;
+    const seen = (() => {
+      try { return JSON.parse(localStorage.getItem(LS_KEYS.seenDecks) || '[]'); }
+      catch { return []; }
+    })();
+    if (seen.includes(currentModule)) return;
+    setFlashcardModule(currentModule);
+    setFlashcardIndex(0);
+    setFlashcardActive(true);
+    const updated = [...seen, currentModule];
+    setSeenDecks(updated);
+    try { localStorage.setItem(LS_KEYS.seenDecks, JSON.stringify(updated)); } catch {}
+  }, [currentModule, screen]);
 
   // Unified dispatch
   const dispatch = useCallback((action) => {
@@ -2292,6 +2553,20 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', paddingTop: '58px' }}>
+      {flashcardActive && (
+        <FlashcardScreen
+          moduleNum={flashcardModule}
+          cards={FLASHCARD_DECKS[flashcardModule]}
+          cardIndex={flashcardIndex}
+          onNext={() => {
+            const deck = FLASHCARD_DECKS[flashcardModule];
+            if (flashcardIndex < deck.length - 1) setFlashcardIndex(i => i + 1);
+            else setFlashcardActive(false);
+          }}
+          onBack={() => setFlashcardIndex(i => Math.max(0, i - 1))}
+          onSkipAll={() => setFlashcardActive(false)}
+        />
+      )}
       <ScoreHeader
         score={score}
         flags={flags}
@@ -2302,6 +2577,18 @@ export default function App() {
 
       {/* Module content */}
       <div style={{ position: 'relative' }}>
+        <div style={{ textAlign: 'center', paddingTop: '12px', paddingBottom: '4px' }}>
+          <button
+            onClick={() => { setFlashcardModule(currentModule); setFlashcardIndex(0); setFlashcardActive(true); }}
+            style={{
+              background: 'transparent', border: '1px solid #1a1a25', borderRadius: '6px',
+              color: '#4b5568', fontSize: '11px', padding: '5px 14px',
+              cursor: 'pointer', letterSpacing: '0.04em',
+            }}
+          >
+            Review key concepts →
+          </button>
+        </div>
         {currentModule === 1 && (
           <MarketModule
             state={market}
